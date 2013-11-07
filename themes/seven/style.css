@@ -100,13 +100,11 @@ acronym {
 }
 ul,
 .block ul,
+.item-list ul,
 .item-list ul {
   list-style-type: disc;
   list-style-image: none;
   margin: 0.25em 0 0.25em 1.5em; /* LTR */
-}
-.item-list .pager li {
-  padding: 0.5em;
 }
 .item-list ul li,
 li.leaf,
@@ -318,7 +316,7 @@ ul.secondary {
 }
 ul.secondary li {
   margin: 0 5px;
-  float: none; /* LTR */
+  float: right; /* LTR */
 }
 ul.secondary li a {
   background-color: #ddd;
@@ -601,8 +599,10 @@ div.teaser-checkbox .form-item,
   padding: 0;
 }
 .form-item label.option {
-  font-size: 0.923em;
   text-transform: none;
+}
+.form-item label.option {
+  font-size: 0.923em;
 }
 .form-item label.option input {
   vertical-align: middle;
@@ -772,6 +772,19 @@ div.admin-panel h3 {
   margin-top: 0;
 }
 
+/* admin/content and admin/people */
+dl.multiselect,
+dl.multiselect dt,
+dl.multiselect dd {
+  margin: 0 10px 0 0; /* LTR */
+}
+dl.multiselect select,
+dl.multiselect dd select {
+  font-size: 0.923em;
+  background: #fff;
+  border: 1px solid #ccc;
+}
+
 /* Update options. */
 div.admin-options {
   background: #f8f8f8;
@@ -835,7 +848,6 @@ body.in-maintenance .form-submit {
 }
 body.in-maintenance #logo {
   margin-bottom: 1.5em;
-  max-width: 180px;
 }
 ol.task-list {
   margin-left: 0; /* LTR */
@@ -852,6 +864,7 @@ ol.task-list li.active {
   color: #000;
 }
 ol.task-list li.done {
+  color: #393;
   background: transparent url(images/task-check.png) no-repeat 0 50%;
   color: green;
 }

@@ -41,7 +41,7 @@
  * $result = db_query_range('SELECT n.nid, n.title, n.created
  *   FROM {node} n WHERE n.uid = :uid', 0, 10, array(':uid' => $uid));
  * foreach ($result as $record) {
- *   // Perform operations on $record->title, etc. here.
+ *   // Perform operations on $node->title, etc. here.
  * }
  * @endcode
  * Curly braces are used around "node" to provide table prefixing via
@@ -152,7 +152,7 @@
  *   }
  *
  *   // $txn goes out of scope here.  Unless the transaction was rolled back, it
- *   // gets automatically committed here.
+ *   // gets automatically commited here.
  * }
  *
  * function my_other_function($id) {
@@ -167,7 +167,7 @@
  * }
  * @endcode
  *
- * @see http://drupal.org/developing/api/database
+ * @link http://drupal.org/developing/api/database
  */
 
 
@@ -179,7 +179,7 @@
  * concrete implementation of it to support special handling required by that
  * database.
  *
- * @see http://php.net/manual/book.pdo.php
+ * @see http://php.net/manual/en/book.pdo.php
  */
 abstract class DatabaseConnection extends PDO {
 
@@ -194,7 +194,7 @@ abstract class DatabaseConnection extends PDO {
 
   /**
    * The key representing this connection.
-   *
+   * 
    * The key is a unique string which identifies a database connection. A
    * connection can be a single server or a cluster of master and slaves (use
    * target to pick between master and slave).
@@ -303,26 +303,10 @@ abstract class DatabaseConnection extends PDO {
     // Call PDO::__construct and PDO::setAttribute.
     parent::__construct($dsn, $username, $password, $driver_options);
 
-    // Set a Statement class, unless the driver opted out.
+    // Set a specific PDOStatement class if the driver requires that.
     if (!empty($this->statementClass)) {
       $this->setAttribute(PDO::ATTR_STATEMENT_CLASS, array($this->statementClass, array($this)));
     }
-  }
-
-  /**
-   * Destroys this Connection object.
-   *
-   * PHP does not destruct an object if it is still referenced in other
-   * variables. In case of PDO database connection objects, PHP only closes the
-   * connection when the PDO object is destructed, so any references to this
-   * object may cause the number of maximum allowed connections to be exceeded.
-   */
-  public function destroy() {
-    // Destroy all references to this connection by setting them to NULL.
-    // The Statement class attribute only accepts a new value that presents a
-    // proper callable, so we reset it to PDOStatement.
-    $this->setAttribute(PDO::ATTR_STATEMENT_CLASS, array('PDOStatement', array()));
-    $this->schema = NULL;
   }
 
   /**
@@ -1004,9 +988,6 @@ abstract class DatabaseConnection extends PDO {
    * @param $name
    *   Optional name of the savepoint.
    *
-   * @return DatabaseTransaction
-   *   A DatabaseTransaction object.
-   *
    * @see DatabaseTransaction
    */
   public function startTransaction($name = '') {
@@ -1035,9 +1016,9 @@ abstract class DatabaseConnection extends PDO {
       throw new DatabaseTransactionNoActiveException();
     }
     // A previous rollback to an earlier savepoint may mean that the savepoint
-    // in question has already been accidentally committed.
-    if (!isset($this->transactionLayers[$savepoint_name])) {
-      throw new DatabaseTransactionNoActiveException();
+    // in question has already been rolled back.
+    if (!in_array($savepoint_name, $this->transactionLayers)) {
+      return;
     }
 
     // We need to find the point we're rolling back to, all other savepoints
@@ -1115,12 +1096,8 @@ abstract class DatabaseConnection extends PDO {
     if (!$this->supportsTransactions()) {
       return;
     }
-    // The transaction has already been committed earlier. There is nothing we
-    // need to do. If this transaction was part of an earlier out-of-order
-    // rollback, an exception would already have been thrown by
-    // Database::rollback().
     if (!isset($this->transactionLayers[$name])) {
-      return;
+      throw new DatabaseTransactionNoActiveException();
     }
 
     // Mark this layer as committable.
@@ -1449,6 +1426,9 @@ abstract class Database {
   /**
    * Gets the connection object for the specified database key and target.
    *
+   * Note: do not use the setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE) on the
+   * returned object because of http://bugs.php.net/bug.php?id=43139.
+   *
    * @param $target
    *   The database target name.
    * @param $key
@@ -1643,8 +1623,8 @@ abstract class Database {
    */
   final public static function removeConnection($key) {
     if (isset(self::$databaseInfo[$key])) {
-      self::closeConnection(NULL, $key);
       unset(self::$databaseInfo[$key]);
+      unset(self::$connections[$key]);
       return TRUE;
     }
     else {
@@ -1710,24 +1690,11 @@ abstract class Database {
     if (!isset($key)) {
       $key = self::$activeKey;
     }
-    // To close a connection, it needs to be set to NULL and removed from the
-    // static variable. In all cases, closeConnection() might be called for a
-    // connection that was not opened yet, in which case the key is not defined
-    // yet and we just ensure that the connection key is undefined.
+    // To close the connection, we need to unset the static variable.
     if (isset($target)) {
-      if (isset(self::$connections[$key][$target])) {
-        self::$connections[$key][$target]->destroy();
-        self::$connections[$key][$target] = NULL;
-      }
       unset(self::$connections[$key][$target]);
     }
     else {
-      if (isset(self::$connections[$key])) {
-        foreach (self::$connections[$key] as $target => $connection) {
-          self::$connections[$key][$target]->destroy();
-          self::$connections[$key][$target] = NULL;
-        }
-      }
       unset(self::$connections[$key]);
     }
   }
@@ -1881,8 +1848,8 @@ class DatabaseTransaction {
    */
   protected $name;
 
-  public function __construct(DatabaseConnection $connection, $name = NULL) {
-    $this->connection = $connection;
+  public function __construct(DatabaseConnection &$connection, $name = NULL) {
+    $this->connection = &$connection;
     // If there is no transaction depth, then no transaction has started. Name
     // the transaction 'drupal_transaction'.
     if (!$depth = $connection->transactionDepth()) {
@@ -1932,19 +1899,21 @@ class DatabaseTransaction {
 }
 
 /**
- * Represents a prepared statement.
+ * A prepared statement.
  *
- * Some methods in that class are purposefully commented out. Due to a change in
+ * Some methods in that class are purposely commented out. Due to a change in
  * how PHP defines PDOStatement, we can't define a signature for those methods
  * that will work the same way between versions older than 5.2.6 and later
- * versions.  See http://bugs.php.net/bug.php?id=42452 for more details.
+ * versions.
+ *
+ * Please refer to http://bugs.php.net/bug.php?id=42452 for more details.
  *
  * Child implementations should either extend PDOStatement:
  * @code
  * class DatabaseStatement_oracle extends PDOStatement implements DatabaseStatementInterface {}
  * @endcode
- * or define their own class. If defining their own class, they will also have
- * to implement either the Iterator or IteratorAggregate interface before
+ * or implement their own class, but in that case they will also have to
+ * implement the Iterator or IteratorArray interfaces before
  * DatabaseStatementInterface:
  * @code
  * class DatabaseStatement_oracle implements Iterator, DatabaseStatementInterface {}
@@ -1986,7 +1955,7 @@ interface DatabaseStatementInterface extends Traversable {
   /**
    * Sets the default fetch mode for this statement.
    *
-   * See http://php.net/manual/pdo.constants.php for the definition of the
+   * See http://php.net/manual/en/pdo.constants.php for the definition of the
    * constants used.
    *
    * @param $mode
@@ -2005,7 +1974,7 @@ interface DatabaseStatementInterface extends Traversable {
   /**
    * Fetches the next row from a result set.
    *
-   * See http://php.net/manual/pdo.constants.php for the definition of the
+   * See http://php.net/manual/en/pdo.constants.php for the definition of the
    * constants used.
    *
    * @param $mode
@@ -2028,7 +1997,7 @@ interface DatabaseStatementInterface extends Traversable {
    *   The numeric index of the field to return. Defaults to the first field.
    *
    * @return
-   *   A single field from the next record, or FALSE if there is no next record.
+   *   A single field from the next record.
    */
   public function fetchField($index = 0);
 
@@ -2048,7 +2017,7 @@ interface DatabaseStatementInterface extends Traversable {
    * helper method, so one is added.
    *
    * @return
-   *   An associative array, or FALSE if there is no next row.
+   *   An associative array.
    */
   public function fetchAssoc();
 
@@ -2076,7 +2045,7 @@ interface DatabaseStatementInterface extends Traversable {
    *   The index of the column number to fetch.
    *
    * @return
-   *   An indexed array, or an empty array if there is no result set.
+   *   An indexed array.
    */
   public function fetchCol($index = 0);
 
@@ -2096,7 +2065,7 @@ interface DatabaseStatementInterface extends Traversable {
    *   The numeric index of the field to use as the array value.
    *
    * @return
-   *   An associative array, or an empty array if there is no result set.
+   *   An associative array.
    */
   public function fetchAllKeyed($key_index = 0, $value_index = 1);
 
@@ -2115,7 +2084,7 @@ interface DatabaseStatementInterface extends Traversable {
    *   set for the query will be used.
    *
    * @return
-   *   An associative array, or an empty array if there is no result set.
+   *   An associative array.
    */
   public function fetchAllAssoc($key, $fetch = NULL);
 }
@@ -2701,7 +2670,7 @@ function db_condition($conjunction) {
 
 
 /**
- * @addtogroup schemaapi
+ * @ingroup schemaapi
  * @{
  */
 
@@ -2798,7 +2767,7 @@ function _db_create_keys_sql($spec) {
  * Renames a table.
  *
  * @param $table
- *   The current name of the table to be renamed.
+ *   The table to be renamed.
  * @param $new_name
  *   The new name for the table.
  */
@@ -3018,7 +2987,7 @@ function db_change_field($table, $field, $field_new, $spec, $keys_new = array())
 }
 
 /**
- * @} End of "addtogroup schemaapi".
+ * @} End of "ingroup schemaapi".
  */
 
 /**
